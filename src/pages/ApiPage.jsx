@@ -243,7 +243,7 @@ export default function ApiPage() {
 
 /* ---------- Live delivery: connect a real, funded SMM provider ---------- */
 function LiveDelivery({ toast }) {
-  const [cfg, setCfg] = useState(() => getProviderConfig() || { url: '', key: '', enabled: false })
+  const [cfg, setCfg] = useState(() => getProviderConfig() || { url: 'https://elitesmm.com/api/v2', key: '', enabled: false })
   const [testing, setTesting] = useState(false)
   const [balance, setBalance] = useState(null)
   const [services, setServices] = useState(null)

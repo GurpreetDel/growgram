@@ -72,7 +72,9 @@ export function StoreProvider({ children }) {
       if (!live.length || !isLiveEnabled()) return
       for (const o of live) {
         try {
-          const r = await liveRequest('status', { order: o.providerOrderId })
+          // Elite SMM (and some others) read the order id from `service` on status
+          // calls, while standard panels use `order` — send both for compatibility.
+          const r = await liveRequest('status', { order: o.providerOrderId, service: o.providerOrderId })
           const remains = Number(r.remains ?? 0)
           const delivered = Math.max(o.delivered, o.qty - remains)
           const status = normalizeStatus(r.status)
