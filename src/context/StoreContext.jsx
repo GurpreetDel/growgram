@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import { serviceById } from '../data/services'
 import { uid } from '../lib/helpers'
 import { providerFor, providerRequest } from '../lib/providerApi'
+import { isLiveEnabled, liveRequest, normalizeStatus } from '../lib/liveProvider'
 import { useAuth } from './AuthContext.jsx'
 import {
   loadData, saveData, defaultData,
@@ -34,6 +35,7 @@ export function StoreProvider({ children }) {
         let changed = false
         const completedNow = []
         const orders = (s.orders || []).map((o) => {
+          if (o.live) return o // real orders are driven by the live status poller, not the sim
           if (o.status === 'Completed' || o.status === 'Partial' || o.status === 'Canceled') return o
           const remaining = o.qty - o.delivered
           if (remaining <= 0) { changed = true; completedNow.push(o); return { ...o, status: 'Completed', delivered: o.qty } }
@@ -60,6 +62,29 @@ export function StoreProvider({ children }) {
     }, 1500)
     return () => clearInterval(tick.current)
   }, [])
+
+  // live status poller: for REAL orders, pull start_count/remains/status from the provider
+  useEffect(() => {
+    const poll = setInterval(async () => {
+      const live = (state.orders || []).filter(
+        (o) => o.live && o.providerOrderId && !['Completed', 'Canceled', 'Partial'].includes(o.status)
+      )
+      if (!live.length || !isLiveEnabled()) return
+      for (const o of live) {
+        try {
+          const r = await liveRequest('status', { order: o.providerOrderId })
+          const remains = Number(r.remains ?? 0)
+          const delivered = Math.max(o.delivered, o.qty - remains)
+          const status = normalizeStatus(r.status)
+          setState((s) => ({
+            ...s,
+            orders: s.orders.map((x) => (x.id === o.id ? { ...x, delivered: Math.min(x.qty, delivered), status, startCount: Number(r.start_count ?? x.startCount) } : x)),
+          }))
+        } catch { /* transient provider/network error — retry next tick */ }
+      }
+    }, 8000)
+    return () => clearInterval(poll)
+  }, [state.orders])
 
   const notify = useCallback((icon, text) => {
     setState((s) => ({ ...s, notifications: [{ id: uid('nt'), icon, text, at: Date.now(), read: false }, ...(s.notifications || [])].slice(0, 40) }))
@@ -92,10 +117,12 @@ export function StoreProvider({ children }) {
     return { ok: true, topup: t }
   }, [account, notify])
 
-  const placeOrder = useCallback(({ serviceId, link, qty, charge, dripRuns = 1, country }) => {
+  const placeOrder = useCallback(({ serviceId, link, qty, charge, dripRuns = 1, country, liveServiceId }) => {
     const svc = serviceById(serviceId)
     if (!svc) return { ok: false, error: 'Unknown service' }
     const provider = providerFor(svc)
+    // real dispatch only when a provider is connected AND a live provider service id is given
+    const goLive = isLiveEnabled() && !!String(liveServiceId || '').trim()
     let result = { ok: false }
     const orderId = 'GG' + Date.now().toString(36).slice(-6).toUpperCase()
     setState((s) => {
@@ -105,11 +132,13 @@ export function StoreProvider({ children }) {
       }
       const order = {
         id: orderId, serviceId, serviceName: svc.name, link, qty: Number(qty),
-        startCount: Math.floor(Math.random() * 4000), delivered: 0,
+        startCount: 0, delivered: 0,
         charge, status: 'Pending', dripRuns, createdAt: Date.now(),
-        provider: provider.name, providerOrderId: null, country: country || null,
+        provider: goLive ? 'Live provider' : provider.name, providerOrderId: null,
+        country: country || null, live: goLive, simulated: !goLive,
+        liveServiceId: goLive ? String(liveServiceId).trim() : null,
       }
-      result = { ok: true, id: order.id, provider: provider.name }
+      result = { ok: true, id: order.id, live: goLive }
       return {
         ...s,
         balance: Math.round((s.balance - charge) * 100) / 100,
@@ -117,16 +146,34 @@ export function StoreProvider({ children }) {
         transactions: [{ id: uid('tx'), type: 'Order', amount: -charge, note: order.id, at: Date.now() }, ...s.transactions],
       }
     })
-    if (result.ok) {
-      providerRequest(provider.id, {
-        action: 'add', service: svc.id, link, quantity: Number(qty),
-        ...(dripRuns > 1 ? { runs: dripRuns, interval: 30 } : {}),
-      }).then((res) => {
-        setState((s) => ({ ...s, orders: s.orders.map((o) => (o.id === orderId ? { ...o, providerOrderId: res.order } : o)) }))
-      })
+    if (!result.ok) return result
+
+    if (goLive) {
+      // REAL order — send to the provider via the serverless proxy
+      liveRequest('add', { service: String(liveServiceId).trim(), link, quantity: Number(qty), ...(dripRuns > 1 ? { runs: dripRuns, interval: 30 } : {}) })
+        .then((res) => {
+          const pid = res.order ?? res.id
+          if (!pid) throw new Error(res.error || 'Provider did not return an order id')
+          setState((s) => ({ ...s, orders: s.orders.map((o) => (o.id === orderId ? { ...o, providerOrderId: pid, status: 'In progress' } : o)) }))
+          notify('🚀', `Order ${orderId} dispatched to provider (#${pid}) — delivering for real`)
+        })
+        .catch((err) => {
+          // refund and mark failed so the user isn't charged for a non-delivery
+          setState((s) => ({
+            ...s,
+            balance: Math.round((s.balance + charge) * 100) / 100,
+            orders: s.orders.map((o) => (o.id === orderId ? { ...o, status: 'Canceled', failed: true } : o)),
+            transactions: [{ id: uid('tx'), type: 'Refund', amount: charge, note: orderId + ' (provider error)', at: Date.now() }, ...s.transactions],
+          }))
+          notify('⚠️', `Live order failed: ${err.message} — refunded`)
+        })
+    } else {
+      // DEMO — labelled simulation; log a provider round-trip for the console
+      providerRequest(provider.id, { action: 'add', service: svc.id, link, quantity: Number(qty), ...(dripRuns > 1 ? { runs: dripRuns, interval: 30 } : {}) })
+        .then((res) => setState((s) => ({ ...s, orders: s.orders.map((o) => (o.id === orderId ? { ...o, providerOrderId: res.order } : o)) })))
     }
     return result
-  }, [])
+  }, [notify])
 
   const requestRefill = useCallback((orderId) => {
     setState((s) => {

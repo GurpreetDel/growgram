@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import Topbar from '../components/Topbar.jsx'
 import StatusBadge from '../components/StatusBadge.jsx'
 import { money, compact, timeAgo } from '../lib/helpers'
+import { isLiveEnabled } from '../lib/liveProvider'
 
 const FILTERS = ['All', 'In progress', 'Pending', 'Completed', 'Partial', 'Canceled']
 
@@ -12,12 +13,19 @@ export default function Orders() {
   const { orders, requestRefill, cancelOrder } = useStore()
   const toast = useToast()
   const [filter, setFilter] = useState('All')
+  const live = isLiveEnabled()
 
   const list = orders.filter((o) => filter === 'All' || o.status === filter)
 
   return (
     <>
-      <Topbar title="Orders" sub="Track every order filling in real time." />
+      <Topbar title="Orders" sub="Track every order in real time." />
+
+      {!live && (
+        <div className="mode-banner demo" style={{ marginBottom: 16 }}>
+          🟡 <b>Demo mode</b> — these orders are <b>simulated</b> and do <b>not</b> add real engagement. Connect a funded provider in <a href="/app/api">API &amp; Providers</a> to deliver for real.
+        </div>
+      )}
 
       <div className="row wrap" style={{ gap: 8, marginBottom: 16 }}>
         {FILTERS.map((f) => (
@@ -43,6 +51,8 @@ export default function Orders() {
                     <div className="row" style={{ gap: 10 }}>
                       <span style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--muted)' }}>{o.id}</span>
                       <StatusBadge status={o.status} />
+                      <span className={'badge ' + (o.live ? 'ok-badge' : '')} style={{ fontSize: 10 }}>{o.live ? '🟢 LIVE' : '🧪 DEMO'}</span>
+                      {o.live && o.providerOrderId && <span style={{ fontSize: 11, color: 'var(--muted-2)', fontFamily: 'monospace' }}>#{o.providerOrderId}</span>}
                     </div>
                     <div style={{ fontWeight: 700, marginTop: 6 }}>{o.serviceName}</div>
                     <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>

@@ -8,6 +8,7 @@ import {
   categoryById, platformOfCategory, dropTypeOf,
 } from '../data/services'
 import { COUNTRIES, countryByCode } from '../data/countries'
+import { isLiveEnabled } from '../lib/liveProvider'
 import { money, compact, priceFor, clamp, parseIgTarget } from '../lib/helpers'
 
 export default function NewOrder() {
@@ -30,6 +31,8 @@ export default function NewOrder() {
   const [drip, setDrip] = useState(false)
   const [dripRuns, setDripRuns] = useState(4)
   const [country, setCountry] = useState(params.get('country') || 'IN')
+  const [liveServiceId, setLiveServiceId] = useState('')
+  const live = isLiveEnabled()
 
   useEffect(() => {
     if (!catServices.find((s) => s.id === serviceId)) setServiceId(catServices[0]?.id)
@@ -52,9 +55,9 @@ export default function NewOrder() {
     if (!service) return
     if (!link.trim()) return toast('Paste your profile / post link first', 'err')
     if (!qtyValid) return toast(`Quantity must be ${service.min}–${compact(service.max)}`, 'err')
-    const res = placeOrder({ serviceId: service.id, link: link.trim(), qty: Number(qty), charge, dripRuns: drip ? dripRuns : 1, country: service.geo ? country : null })
+    const res = placeOrder({ serviceId: service.id, link: link.trim(), qty: Number(qty), charge, dripRuns: drip ? dripRuns : 1, country: service.geo ? country : null, liveServiceId: live ? liveServiceId : null })
     if (res.ok) {
-      toast(`Order ${res.id} placed — filling now! ⚡`, 'ok')
+      toast(res.live ? `Order ${res.id} sent to provider — delivering for real 🚀` : `Order ${res.id} placed (demo) — simulating ⚡`, 'ok')
       navigate('/app/orders')
     } else {
       toast(res.error || 'Could not place order', 'err')
@@ -64,6 +67,12 @@ export default function NewOrder() {
   return (
     <>
       <Topbar title="New Order" sub="Pick a platform, choose a service, paste your link and go live in seconds." />
+
+      <div className={'mode-banner ' + (live ? 'live' : 'demo')}>
+        {live
+          ? <>🟢 <b>Live delivery ON</b> — enter your provider’s service ID below and this order is dispatched for real.</>
+          : <>🟡 <b>Demo mode</b> — orders here are <b>simulated</b> for preview and do <b>not</b> add real followers. Connect a provider in <a href="/app/api">API &amp; Providers</a> to deliver for real.</>}
+      </div>
 
       <div className="platform-rail">
         {PLATFORMS.map((p) => (
@@ -118,6 +127,14 @@ export default function NewOrder() {
               ))}
             </div>
           </div>
+
+          {live && (
+            <div className="field">
+              <label>🟢 Provider service ID (required for real delivery)</label>
+              <input className="input" value={liveServiceId} onChange={(e) => setLiveServiceId(e.target.value.replace(/[^0-9]/g, ''))} placeholder="e.g. 1234 — copy from API & Providers → provider services" />
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Leave empty to place a demo order instead. This must be the numeric service ID from <b>your</b> provider, not GrowGram’s.</div>
+            </div>
+          )}
 
           {service?.dripfeed && (
             <div className="field">

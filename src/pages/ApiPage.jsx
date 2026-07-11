@@ -7,6 +7,7 @@ import {
 } from '../lib/providerApi'
 import { timeAgo, uid } from '../lib/helpers'
 import { SERVICES } from '../data/services'
+import { getProviderConfig, setProviderConfig, clearProviderConfig, isLiveEnabled, liveRequest } from '../lib/liveProvider'
 
 const RESELLER_KEY_STORAGE = 'growgram.reseller.key'
 
@@ -75,7 +76,9 @@ export default function ApiPage() {
 
   return (
     <>
-      <Topbar title="API & Providers" sub="The integration layer: upstream providers, live request console, and your reseller API." />
+      <Topbar title="API & Providers" sub="The integration layer: connect a real provider for live delivery, plus the request console and your reseller API." />
+
+      <LiveDelivery toast={toast} />
 
       {/* ---------- Reseller API ---------- */}
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
@@ -235,5 +238,103 @@ export default function ApiPage() {
         </div>
       </div>
     </>
+  )
+}
+
+/* ---------- Live delivery: connect a real, funded SMM provider ---------- */
+function LiveDelivery({ toast }) {
+  const [cfg, setCfg] = useState(() => getProviderConfig() || { url: '', key: '', enabled: false })
+  const [testing, setTesting] = useState(false)
+  const [balance, setBalance] = useState(null)
+  const [services, setServices] = useState(null)
+  const [svcQ, setSvcQ] = useState('')
+  const enabled = isLiveEnabled()
+
+  const save = (patch) => { const next = { ...cfg, ...patch }; setCfg(next); setProviderConfig(next) }
+
+  const testEnable = async () => {
+    if (!cfg.url.trim() || !cfg.key.trim()) return toast('Enter your provider API URL and key', 'err')
+    setTesting(true)
+    setProviderConfig({ ...cfg, enabled: false }) // ensure proxy uses these creds for the test
+    try {
+      const bal = await liveRequest('balance')
+      setBalance(bal)
+      save({ enabled: true, balance: bal.balance, currency: bal.currency })
+      toast(`Connected! Provider balance: ${bal.balance ?? '—'} ${bal.currency ?? ''} 🟢`, 'ok')
+    } catch (e) {
+      save({ enabled: false })
+      toast(`Connection failed: ${e.message}`, 'err')
+    } finally { setTesting(false) }
+  }
+
+  const disable = () => { clearProviderConfig(); setCfg({ url: '', key: '', enabled: false }); setBalance(null); setServices(null); toast('Live delivery disabled — back to demo mode', 'ok') }
+
+  const loadServices = async () => {
+    setTesting(true)
+    try {
+      const list = await liveRequest('services')
+      setServices(Array.isArray(list) ? list : [])
+      toast(`Loaded ${Array.isArray(list) ? list.length : 0} provider services 🔄`, 'ok')
+    } catch (e) { toast(`Could not load services: ${e.message}`, 'err') } finally { setTesting(false) }
+  }
+
+  const filtered = (services || []).filter((s) =>
+    !svcQ || String(s.service).includes(svcQ) || String(s.name || '').toLowerCase().includes(svcQ.toLowerCase())
+  ).slice(0, 60)
+
+  return (
+    <div className="card pad" style={{ marginBottom: 16, borderColor: enabled ? 'rgba(34,209,140,.4)' : 'rgba(255,181,69,.4)' }}>
+      <div className="row between wrap" style={{ gap: 10, marginBottom: 8 }}>
+        <span className="badge grad">🚀 Live delivery {enabled ? '· ON' : '· OFF (demo mode)'}</span>
+        <span className={'badge ' + (enabled ? 'ok-badge' : 'err-badge')}>{enabled ? '🟢 Real orders will be dispatched' : '🟡 Orders are simulated'}</span>
+      </div>
+      <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 0 }}>
+        To deliver <b style={{ color: 'var(--text)' }}>real</b> followers/likes/views you must connect a <b style={{ color: 'var(--text)' }}>funded SMM provider</b> that
+        speaks the standard SMM API v2. Sign up with a provider, add funds there, then paste its API URL + key below.
+        For best security set <code>PROVIDER_API_URL</code> &amp; <code>PROVIDER_API_KEY</code> as Vercel env vars instead.
+      </p>
+      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>Provider API URL</label>
+          <input className="input" placeholder="https://yourprovider.com/api/v2" value={cfg.url} onChange={(e) => setCfg({ ...cfg, url: e.target.value.trim() })} />
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>Provider API key</label>
+          <input className="input" type="password" placeholder="your provider api key" value={cfg.key} onChange={(e) => setCfg({ ...cfg, key: e.target.value.trim() })} />
+        </div>
+      </div>
+      <div className="row wrap" style={{ gap: 8, marginTop: 12 }}>
+        <button className="btn primary" disabled={testing} onClick={testEnable}>{testing ? 'Testing…' : (enabled ? '↻ Re-test connection' : '🔌 Test & enable live delivery')}</button>
+        {enabled && <button className="btn" disabled={testing} onClick={loadServices}>📋 Load provider services</button>}
+        {enabled && <button className="btn ghost" onClick={disable}>Disable</button>}
+        {balance && <span className="badge">Balance: {balance.balance} {balance.currency}</span>}
+      </div>
+
+      {services && (
+        <div style={{ marginTop: 14 }}>
+          <div className="row between" style={{ marginBottom: 8 }}>
+            <b style={{ fontSize: 13 }}>Provider services — copy an ID into New Order</b>
+            <input className="input" style={{ maxWidth: 220, padding: '7px 10px' }} placeholder="🔍 filter…" value={svcQ} onChange={(e) => setSvcQ(e.target.value)} />
+          </div>
+          <div style={{ maxHeight: 260, overflow: 'auto' }}>
+            <table className="table">
+              <thead><tr><th>ID</th><th>Service</th><th>Rate/1k</th><th className="hide-mobile">Min–Max</th></tr></thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr key={s.service}>
+                    <td style={{ fontFamily: 'monospace', fontWeight: 700 }}>
+                      <button className="btn sm ghost" onClick={() => { navigator.clipboard?.writeText(String(s.service)); toast(`Service ID ${s.service} copied 📋`, 'ok') }}>{s.service} 📋</button>
+                    </td>
+                    <td style={{ fontSize: 12.5 }}>{s.name}</td>
+                    <td>{s.rate}</td>
+                    <td className="hide-mobile">{s.min}–{s.max}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
