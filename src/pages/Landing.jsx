@@ -23,25 +23,27 @@ export default function Landing() {
         <div className="row">
           <a className="btn ghost hide-mobile" href="#features">Features</a>
           <a className="btn ghost hide-mobile" href="#pricing">Pricing</a>
-          <Link className="btn primary" to="/app">Open Panel →</Link>
+          <Link className="btn ghost hide-mobile" to="/login">Log in</Link>
+          <Link className="btn primary" to="/register">Get started →</Link>
         </div>
       </nav>
 
       <header className="hero">
-        <span className="pill-tag">🚀 The 2027 Instagram growth panel — reimagined</span>
-        <h1>Grow your Instagram<br /><span className="gradient-text">on autopilot.</span></h1>
+        <span className="pill-tag">🚀 The 2026 all-platform growth panel — reimagined</span>
+        <h1>Grow every platform<br /><span className="gradient-text">from one panel.</span></h1>
         <p>
-          Real followers, likes, reel views and an AI content co-pilot — all in one lightning-fast
-          panel. Order in a tap, watch it fill live, and let the algorithm do the rest.
+          Instagram, YouTube, TikTok, Spotify, Threads, Snapchat, X, Telegram &amp; more —
+          real followers, likes, views, story views, power tiers &amp; geo-targeting across 150+ countries.
+          Order in a tap, watch it fill live, and let the algorithm do the rest.
         </p>
         <div className="hero-cta">
-          <Link className="btn primary" to="/app" style={{ padding: '14px 26px', fontSize: 15 }}>Launch Free Panel</Link>
-          <Link className="btn" to="/app/services" style={{ padding: '14px 26px', fontSize: 15 }}>Browse Services</Link>
+          <Link className="btn primary" to="/register" style={{ padding: '14px 26px', fontSize: 15 }}>Create free account</Link>
+          <Link className="btn" to="/login" style={{ padding: '14px 26px', fontSize: 15 }}>Log in</Link>
         </div>
         <div className="marquee-strip">
-          <span className="badge">👥 2.4M followers delivered</span>
-          <span className="badge">⭐ 4.9/5 from 18,200 orders</span>
-          <span className="badge">⚡ Avg start: 12s</span>
+          <span className="badge">🌍 150+ countries</span>
+          <span className="badge">🛡️ Non-drop & Power tiers</span>
+          <span className="badge">⚡ Live order engine</span>
           <span className="badge">🔁 365-day refill</span>
         </div>
       </header>
@@ -84,9 +86,9 @@ export default function Landing() {
         <div className="card pad" style={{ marginTop: 60, textAlign: 'center', padding: '48px 24px', background: 'var(--ig-soft)' }}>
           <h2 style={{ fontSize: 32, margin: '0 0 12px' }}>Ready to grow?</h2>
           <p style={{ color: 'var(--muted)', margin: '0 auto 24px', maxWidth: 480 }}>
-            Open the panel now — you start with <b className="gradient-text">₹500 free demo credit</b>. No signup required.
+            Create your account, top up your wallet once, and order across <b className="gradient-text">every platform</b> in a tap.
           </p>
-          <Link className="btn primary" to="/app" style={{ padding: '14px 28px', fontSize: 15 }}>Open GrowGram Panel →</Link>
+          <Link className="btn primary" to="/register" style={{ padding: '14px 28px', fontSize: 15 }}>Create your account →</Link>
         </div>
       </section>
 

@@ -39,7 +39,7 @@ export default function Dashboard() {
       <Topbar title="Dashboard" sub="Welcome back — here's your growth at a glance." />
 
       <div className="grid g4" style={{ marginBottom: 18 }}>
-        <Stat icon="💳" label="Wallet balance" value={money(balance)} delta="₹500 welcome credit" />
+        <Stat icon="💳" label="Wallet balance" value={money(balance)} delta="tap to top up" />
         <Stat icon="🔄" label="Active orders" value={stats.active} delta={stats.active ? 'Filling live now' : 'All caught up'} />
         <Stat icon="📤" label="Total delivered" value={compact(stats.delivered)} delta="across all campaigns" />
         <Stat icon="💰" label="Total spent" value={money(stats.spent)} delta="lifetime" />

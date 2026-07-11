@@ -1,170 +1,214 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
 import { serviceById } from '../data/services'
 import { uid } from '../lib/helpers'
+import { providerFor, providerRequest } from '../lib/providerApi'
+import { useAuth } from './AuthContext.jsx'
+import {
+  loadData, saveData, defaultData,
+  createTopup, getTopups, setTopupStatus, creditAccount,
+} from '../lib/accountData'
 
 const StoreContext = createContext(null)
 export const useStore = () => useContext(StoreContext)
 
-const KEY = 'growgram.state.v1'
-
-const seedOrders = () => {
-  const now = Date.now()
-  return [
-    {
-      id: 'GG' + (now - 8_600_000).toString(36).slice(-6).toUpperCase(),
-      serviceId: 1002, serviceName: 'Instagram Followers — HQ [30d Refill]',
-      link: '@growgram.demo', qty: 5000, startCount: 1240, delivered: 5000,
-      charge: 325, status: 'Completed', dripRuns: 1, createdAt: now - 8_600_000,
-    },
-    {
-      id: 'GG' + (now - 3_200_000).toString(36).slice(-6).toUpperCase(),
-      serviceId: 3002, serviceName: 'Instagram Reels Views [Boosted]',
-      link: 'https://instagram.com/reel/CxDemo123', qty: 50000, startCount: 800, delivered: 33120,
-      charge: 450, status: 'In progress', dripRuns: 1, createdAt: now - 3_200_000,
-    },
-  ]
-}
-
-const defaultState = () => ({
-  user: null, // { name, email }
-  balance: 500, // starting demo credit
-  orders: seedOrders(),
-  transactions: [
-    { id: uid('tx'), type: 'Bonus', amount: 500, note: 'Welcome credit', at: Date.now() - 9_000_000 },
-  ],
-  referralCode: 'GROW-' + Math.random().toString(36).slice(2, 7).toUpperCase(),
-  referralEarnings: 0,
-})
-
-const load = () => {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (raw) return { ...defaultState(), ...JSON.parse(raw) }
-  } catch {}
-  return defaultState()
-}
-
 export function StoreProvider({ children }) {
-  const [state, setState] = useState(load)
+  const { account, isAdmin } = useAuth()
+  const accountId = account?.id || null
+  const [state, setState] = useState(() => (accountId ? loadData(accountId, isAdmin) : defaultData()))
   const tick = useRef(null)
 
-  // persist
+  // load the right account's data whenever the session changes
   useEffect(() => {
-    localStorage.setItem(KEY, JSON.stringify(state))
-  }, [state])
+    setState(accountId ? loadData(accountId, isAdmin) : defaultData())
+  }, [accountId, isAdmin])
 
-  // live order-processing engine: advances any "In progress" / "Pending" order
+  // persist current account's data
+  useEffect(() => {
+    if (accountId) saveData(accountId, state)
+  }, [state, accountId])
+
+  // live order-processing engine
   useEffect(() => {
     tick.current = setInterval(() => {
       setState((s) => {
         let changed = false
-        const orders = s.orders.map((o) => {
+        const completedNow = []
+        const orders = (s.orders || []).map((o) => {
           if (o.status === 'Completed' || o.status === 'Partial' || o.status === 'Canceled') return o
-          const svc = serviceById(o.serviceId)
-          // speed: deliver ~3–8% of remaining each tick so small orders finish fast, big ones stream
           const remaining = o.qty - o.delivered
-          if (remaining <= 0) {
-            changed = true
-            return { ...o, status: 'Completed', delivered: o.qty }
-          }
+          if (remaining <= 0) { changed = true; completedNow.push(o); return { ...o, status: 'Completed', delivered: o.qty } }
           const step = Math.max(1, Math.ceil(o.qty * (0.03 + Math.random() * 0.05)))
           const delivered = Math.min(o.qty, o.delivered + step)
           changed = true
-          const status = delivered >= o.qty ? 'Completed' : 'In progress'
-          return { ...o, delivered, status: svc?.drop === '0%' ? status : status }
+          const done = delivered >= o.qty
+          if (done) completedNow.push(o)
+          return { ...o, delivered, status: done ? 'Completed' : 'In progress' }
         })
-        return changed ? { ...s, orders } : s
+        if (!changed) return s
+        const notifications = completedNow.length
+          ? [
+              ...completedNow.map((o) => ({
+                id: uid('nt'), icon: '✅',
+                text: `Order ${o.id} completed — ${o.qty.toLocaleString('en-IN')} delivered to ${o.link}`,
+                at: Date.now(), read: false,
+              })),
+              ...(s.notifications || []),
+            ].slice(0, 40)
+          : s.notifications
+        return { ...s, orders, notifications }
       })
     }, 1500)
     return () => clearInterval(tick.current)
   }, [])
 
-  const login = useCallback((name, email) => {
-    setState((s) => ({ ...s, user: { name: name || 'Creator', email: email || 'you@growgram.app' } }))
+  const notify = useCallback((icon, text) => {
+    setState((s) => ({ ...s, notifications: [{ id: uid('nt'), icon, text, at: Date.now(), read: false }, ...(s.notifications || [])].slice(0, 40) }))
   }, [])
 
-  const logout = useCallback(() => setState((s) => ({ ...s, user: null })), [])
+  const markNotificationsRead = useCallback(() => {
+    setState((s) => ({ ...s, notifications: (s.notifications || []).map((n) => ({ ...n, read: true })) }))
+  }, [])
 
-  const addFunds = useCallback((amount, method = 'UPI') => {
+  // ---- ADMIN: unlimited instant top-up to own treasury ----
+  const adminAddFunds = useCallback((amount) => {
     const amt = Number(amount)
     if (!amt || amt <= 0) return { ok: false, error: 'Enter a valid amount' }
     setState((s) => ({
       ...s,
       balance: Math.round((s.balance + amt) * 100) / 100,
-      transactions: [
-        { id: uid('tx'), type: 'Deposit', amount: amt, note: method, at: Date.now() },
-        ...s.transactions,
-      ],
+      transactions: [{ id: uid('tx'), type: 'Deposit', amount: amt, note: 'Owner top-up', at: Date.now() }, ...s.transactions],
+      notifications: [{ id: uid('nt'), icon: '👑', text: `₹${amt.toLocaleString('en-IN')} added to treasury`, at: Date.now(), read: false }, ...(s.notifications || [])].slice(0, 40),
     }))
     return { ok: true }
   }, [])
 
-  const placeOrder = useCallback(({ serviceId, link, qty, charge, dripRuns = 1 }) => {
+  // ---- USER: real payment -> pending top-up request the admin approves ----
+  const requestTopup = useCallback(({ amount, method, ref }) => {
+    const amt = Number(amount)
+    if (!amt || amt <= 0) return { ok: false, error: 'Enter a valid amount' }
+    if (!account) return { ok: false, error: 'Please log in' }
+    const t = createTopup({ accountId: account.id, accountName: account.name, accountEmail: account.email, amount: amt, method, ref })
+    notify('⏳', `Top-up of ₹${amt.toLocaleString('en-IN')} submitted — awaiting confirmation`)
+    return { ok: true, topup: t }
+  }, [account, notify])
+
+  const placeOrder = useCallback(({ serviceId, link, qty, charge, dripRuns = 1, country }) => {
     const svc = serviceById(serviceId)
     if (!svc) return { ok: false, error: 'Unknown service' }
+    const provider = providerFor(svc)
     let result = { ok: false }
+    const orderId = 'GG' + Date.now().toString(36).slice(-6).toUpperCase()
     setState((s) => {
       if (charge > s.balance) {
         result = { ok: false, error: 'Insufficient balance — add funds first.' }
         return s
       }
       const order = {
-        id: 'GG' + Date.now().toString(36).slice(-6).toUpperCase(),
-        serviceId, serviceName: svc.name, link, qty: Number(qty),
+        id: orderId, serviceId, serviceName: svc.name, link, qty: Number(qty),
         startCount: Math.floor(Math.random() * 4000), delivered: 0,
         charge, status: 'Pending', dripRuns, createdAt: Date.now(),
+        provider: provider.name, providerOrderId: null, country: country || null,
       }
-      result = { ok: true, id: order.id }
+      result = { ok: true, id: order.id, provider: provider.name }
       return {
         ...s,
         balance: Math.round((s.balance - charge) * 100) / 100,
         orders: [order, ...s.orders],
-        transactions: [
-          { id: uid('tx'), type: 'Order', amount: -charge, note: order.id, at: Date.now() },
-          ...s.transactions,
-        ],
+        transactions: [{ id: uid('tx'), type: 'Order', amount: -charge, note: order.id, at: Date.now() }, ...s.transactions],
       }
     })
+    if (result.ok) {
+      providerRequest(provider.id, {
+        action: 'add', service: svc.id, link, quantity: Number(qty),
+        ...(dripRuns > 1 ? { runs: dripRuns, interval: 30 } : {}),
+      }).then((res) => {
+        setState((s) => ({ ...s, orders: s.orders.map((o) => (o.id === orderId ? { ...o, providerOrderId: res.order } : o)) }))
+      })
+    }
     return result
   }, [])
 
   const requestRefill = useCallback((orderId) => {
-    setState((s) => ({
-      ...s,
-      orders: s.orders.map((o) =>
-        o.id === orderId && o.status === 'Completed'
-          ? { ...o, status: 'In progress', delivered: Math.floor(o.qty * 0.9) }
-          : o
-      ),
-    }))
+    setState((s) => {
+      const o = s.orders.find((x) => x.id === orderId)
+      if (o) { const svc = serviceById(o.serviceId); providerRequest(providerFor(svc).id, { action: 'refill', order: o.providerOrderId }) }
+      return { ...s, orders: s.orders.map((x) => (x.id === orderId && x.status === 'Completed' ? { ...x, status: 'In progress', delivered: Math.floor(x.qty * 0.9) } : x)) }
+    })
   }, [])
 
   const cancelOrder = useCallback((orderId) => {
     setState((s) => {
       const o = s.orders.find((x) => x.id === orderId)
       if (!o || (o.status !== 'Pending' && o.status !== 'In progress')) return s
+      const svc = serviceById(o.serviceId)
+      providerRequest(providerFor(svc).id, { action: 'cancel', order: o.providerOrderId })
       const refund = Math.round((o.charge * (1 - o.delivered / o.qty)) * 100) / 100
       return {
         ...s,
         balance: Math.round((s.balance + refund) * 100) / 100,
-        orders: s.orders.map((x) =>
-          x.id === orderId ? { ...x, status: o.delivered > 0 ? 'Partial' : 'Canceled' } : x
-        ),
-        transactions: refund > 0
-          ? [{ id: uid('tx'), type: 'Refund', amount: refund, note: orderId, at: Date.now() }, ...s.transactions]
-          : s.transactions,
+        orders: s.orders.map((x) => (x.id === orderId ? { ...x, status: o.delivered > 0 ? 'Partial' : 'Canceled' } : x)),
+        transactions: refund > 0 ? [{ id: uid('tx'), type: 'Refund', amount: refund, note: orderId, at: Date.now() }, ...s.transactions] : s.transactions,
       }
     })
   }, [])
 
-  const resetDemo = useCallback(() => {
-    localStorage.removeItem(KEY)
-    setState(defaultState())
+  // ---------- inbox ----------
+  const sendMessage = useCallback((peerId, text) => {
+    if (!text.trim()) return
+    setState((s) => {
+      const thread = s.threads?.[peerId] || []
+      return { ...s, threads: { ...(s.threads || {}), [peerId]: [...thread, { from: 'me', text: text.trim(), at: Date.now() }] } }
+    })
   }, [])
+
+  const receiveMessage = useCallback((peerId, text) => {
+    setState((s) => {
+      const thread = s.threads?.[peerId] || []
+      return { ...s, threads: { ...(s.threads || {}), [peerId]: [...thread, { from: peerId, text, at: Date.now() }] } }
+    })
+  }, [])
+
+  // ---------- admin: order management ----------
+  const adminCompleteOrder = useCallback((orderId) => {
+    setState((s) => ({ ...s, orders: s.orders.map((o) => (o.id === orderId ? { ...o, status: 'Completed', delivered: o.qty } : o)) }))
+  }, [])
+
+  const adminRefundOrder = useCallback((orderId) => {
+    setState((s) => {
+      const o = s.orders.find((x) => x.id === orderId)
+      if (!o) return s
+      return {
+        ...s,
+        balance: Math.round((s.balance + o.charge) * 100) / 100,
+        orders: s.orders.map((x) => (x.id === orderId ? { ...x, status: 'Canceled' } : x)),
+        transactions: [{ id: uid('tx'), type: 'Refund', amount: o.charge, note: orderId + ' (admin)', at: Date.now() }, ...s.transactions],
+      }
+    })
+  }, [])
+
+  // ---------- admin: top-up approvals (credits the requester's own wallet) ----------
+  const approveTopup = useCallback((topupId) => {
+    const t = setTopupStatus(topupId, 'Approved')
+    if (t) creditAccount(t.accountId, t.amount, `${t.method} approved`)
+    return t
+  }, [])
+  const rejectTopup = useCallback((topupId) => setTopupStatus(topupId, 'Rejected'), [])
+  const creditUser = useCallback((userId, amount, note) => creditAccount(userId, Number(amount), note || 'Manual credit (admin)'), [])
+
+  const resetMyData = useCallback(() => {
+    if (!accountId) return
+    setState(defaultData(isAdmin))
+  }, [accountId, isAdmin])
 
   const value = {
     ...state,
-    login, logout, addFunds, placeOrder, requestRefill, cancelOrder, resetDemo,
+    account, isAdmin,
+    notify, markNotificationsRead,
+    adminAddFunds, requestTopup, placeOrder, requestRefill, cancelOrder,
+    sendMessage, receiveMessage,
+    adminCompleteOrder, adminRefundOrder,
+    approveTopup, rejectTopup, creditUser, getTopups,
+    resetMyData,
   }
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }
