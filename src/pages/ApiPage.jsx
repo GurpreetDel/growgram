@@ -78,7 +78,7 @@ export default function ApiPage() {
     <>
       <Topbar title="API & Providers" sub="The integration layer: connect a real provider for live delivery, plus the request console and your reseller API." />
 
-      <LiveDelivery toast={toast} />
+      <LiveDelivery toast={toast} resellerKey={resellerKey} />
 
       {/* ---------- Reseller API ---------- */}
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
@@ -242,7 +242,7 @@ export default function ApiPage() {
 }
 
 /* ---------- Live delivery: connect a real, funded SMM provider ---------- */
-function LiveDelivery({ toast }) {
+function LiveDelivery({ toast, resellerKey }) {
   const [cfg, setCfg] = useState(() => getProviderConfig() || { url: 'https://elitesmm.com/api/v2', key: '', enabled: false })
   const [testing, setTesting] = useState(false)
   const [balance, setBalance] = useState(null)
@@ -251,6 +251,26 @@ function LiveDelivery({ toast }) {
   const enabled = isLiveEnabled()
 
   const save = (patch) => { const next = { ...cfg, ...patch }; setCfg(next); setProviderConfig(next) }
+
+  // One-click self-hosted provider: point the live pipeline at this deployment's
+  // own /api/v2 (GrowGram Native), authenticated with the reseller key.
+  const connectNative = async () => {
+    const nativeCfg = { url: window.location.origin + '/api/v2', key: resellerKey, native: true, enabled: false }
+    setCfg(nativeCfg)
+    setProviderConfig(nativeCfg)
+    setTesting(true)
+    try {
+      const bal = await liveRequest('balance')
+      setBalance(bal)
+      const next = { ...nativeCfg, enabled: true, balance: bal.balance, currency: bal.currency }
+      setCfg(next)
+      setProviderConfig(next)
+      toast('GrowGram Native provider connected — orders now flow through your own /api/v2 🛰️', 'ok')
+    } catch (e) {
+      setProviderConfig({ ...nativeCfg, enabled: false })
+      toast(`Native provider unreachable: ${e.message} (works on the Vercel deployment, not vite dev)`, 'err')
+    } finally { setTesting(false) }
+  }
 
   const testEnable = async () => {
     if (!cfg.url.trim() || !cfg.key.trim()) return toast('Enter your provider API URL and key', 'err')
@@ -285,14 +305,24 @@ function LiveDelivery({ toast }) {
   return (
     <div className="card pad" style={{ marginBottom: 16, borderColor: enabled ? 'rgba(34,209,140,.4)' : 'rgba(255,181,69,.4)' }}>
       <div className="row between wrap" style={{ gap: 10, marginBottom: 8 }}>
-        <span className="badge grad">🚀 Live delivery {enabled ? '· ON' : '· OFF (demo mode)'}</span>
-        <span className={'badge ' + (enabled ? 'ok-badge' : 'err-badge')}>{enabled ? '🟢 Real orders will be dispatched' : '🟡 Orders are simulated'}</span>
+        <span className="badge grad">🚀 Live delivery {enabled ? (cfg.native ? '· ON (GrowGram Native)' : '· ON') : '· OFF (demo mode)'}</span>
+        <span className={'badge ' + (enabled ? 'ok-badge' : 'err-badge')}>
+          {enabled ? (cfg.native ? '🛰️ Orders dispatched to your own provider' : '🟢 Real orders will be dispatched') : '🟡 Orders are simulated'}
+        </span>
       </div>
       <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 0 }}>
         To deliver <b style={{ color: 'var(--text)' }}>real</b> followers/likes/views you must connect a <b style={{ color: 'var(--text)' }}>funded SMM provider</b> that
         speaks the standard SMM API v2. Sign up with a provider, add funds there, then paste its API URL + key below.
         For best security set <code>PROVIDER_API_URL</code> &amp; <code>PROVIDER_API_KEY</code> as Vercel env vars instead.
+        No third-party provider? Spin up <b style={{ color: 'var(--text)' }}>GrowGram Native</b> — this panel's own self-hosted <code>/api/v2</code> provider.
+        The full dispatch → status-poll pipeline runs over real HTTP against your own deployment (engagement itself stays simulated).
       </p>
+      <div className="row wrap" style={{ gap: 8, marginBottom: 12 }}>
+        <button className="btn" disabled={testing} onClick={connectNative}>
+          {cfg.native && enabled ? '🛰️ Reconnect GrowGram Native' : '🛰️ Create my own provider (GrowGram Native)'}
+        </button>
+        {cfg.native && enabled && <span className="badge ok-badge">Self-hosted · {window.location.origin}/api/v2</span>}
+      </div>
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div className="field" style={{ marginBottom: 0 }}>
           <label>Provider API URL</label>

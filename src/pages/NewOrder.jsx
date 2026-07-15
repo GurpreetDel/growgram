@@ -8,7 +8,7 @@ import {
   categoryById, platformOfCategory, dropTypeOf,
 } from '../data/services'
 import { COUNTRIES, countryByCode } from '../data/countries'
-import { isLiveEnabled } from '../lib/liveProvider'
+import { isLiveEnabled, getProviderConfig } from '../lib/liveProvider'
 import { money, compact, priceFor, clamp, parseIgTarget } from '../lib/helpers'
 
 export default function NewOrder() {
@@ -33,10 +33,16 @@ export default function NewOrder() {
   const [country, setCountry] = useState(params.get('country') || 'IN')
   const [liveServiceId, setLiveServiceId] = useState('')
   const live = isLiveEnabled()
+  const nativeProvider = live && !!getProviderConfig()?.native
 
   useEffect(() => {
     if (!catServices.find((s) => s.id === serviceId)) setServiceId(catServices[0]?.id)
   }, [cat]) // eslint-disable-line
+
+  // GrowGram Native serves this panel's own catalogue, so its service ids match 1:1
+  useEffect(() => {
+    if (nativeProvider && serviceId) setLiveServiceId(String(serviceId))
+  }, [nativeProvider, serviceId])
 
   const service = SERVICES.find((s) => s.id === Number(serviceId))
   const target = parseIgTarget(link)
@@ -130,9 +136,13 @@ export default function NewOrder() {
 
           {live && (
             <div className="field">
-              <label>🟢 Provider service ID (required for real delivery)</label>
+              <label>{nativeProvider ? '🛰️ Provider service ID (auto-filled from GrowGram Native)' : '🟢 Provider service ID (required for real delivery)'}</label>
               <input className="input" value={liveServiceId} onChange={(e) => setLiveServiceId(e.target.value.replace(/[^0-9]/g, ''))} placeholder="e.g. 1234 — copy from API & Providers → provider services" />
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Leave empty to place a demo order instead. This must be the numeric service ID from <b>your</b> provider, not GrowGram’s.</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                {nativeProvider
+                  ? <>Your self-hosted provider serves GrowGram's own catalogue, so the ID matches the selected service automatically.</>
+                  : <>Leave empty to place a demo order instead. This must be the numeric service ID from <b>your</b> provider, not GrowGram's.</>}
+              </div>
             </div>
           )}
 
